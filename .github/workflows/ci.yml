@@ -1,0 +1,34 @@
+name: ci
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        cc: [gcc, clang]
+    steps:
+      - uses: actions/checkout@v4
+      - run: make CC=${{ matrix.cc }} test
+      - run: make CC=${{ matrix.cc }} asan
+
+  container:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t sip-cnf:ci .
+      - name: smoke test the image, including graceful stop
+        run: |
+          docker run -d --name cnf -e DRAIN_SECONDS=2 -p 8080:8080 sip-cnf:ci
+          for i in $(seq 20); do curl -fs localhost:8080/readyz && break; sleep 0.5; done
+          curl -fs localhost:8080/metrics
+          docker stop -t 10 cnf
+          test "$(docker inspect -f '{{.State.ExitCode}}' cnf)" = 0
+          docker logs cnf
+
+  manifests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          curl -sSL https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz | tar xz
+          ./kubeconform -strict -summary deploy/
